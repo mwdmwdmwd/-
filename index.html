@@ -24,62 +24,59 @@
     body {
       display: flex;
       justify-content: center;
+      overflow: auto;
     }
     .app {
       width: min(100vw, 520px);
-      min-height: 100vh;
+      min-height: 100svh;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: flex-start;
-      padding: max(18px, env(safe-area-inset-top)) 12px max(24px, env(safe-area-inset-bottom)) 12px;
+      padding: max(12px, env(safe-area-inset-top)) 10px calc(18px + env(safe-area-inset-bottom)) 10px;
     }
     h1 {
-      margin: 0 0 12px;
-      font-size: 30px;
+      margin: 0 0 8px;
+      font-size: 24px;
+      font-weight: 900;
     }
     .hud {
-      width: min(94vw, 440px);
+      width: min(94vw, 400px);
       display: flex;
       justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 8px;
-      font-size: 15px;
-      font-weight: 700;
+      gap: 6px;
+      margin-bottom: 6px;
+      font-size: 13px;
+      font-weight: 800;
     }
     .hud.secondary {
-      font-size: 14px;
-      opacity: 0.9;
-      margin-bottom: 12px;
+      font-size: 12px;
+      opacity: 0.95;
+      margin-bottom: 8px;
     }
     #game {
-      width: min(94vw, 440px);
+      width: min(94vw, 400px);
       height: auto;
-      background: linear-gradient(180deg, #111827 0%, #1f2937 100%);
-      border: 2px solid rgba(255,255,255,0.14);
+      background: linear-gradient(180deg, #111827 0%, #0b1220 100%);
+      border: 2px solid rgba(255,255,255,0.16);
       border-radius: 16px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
       touch-action: none;
       display: block;
     }
     .controls {
-      margin-top: 14px;
+      margin-top: 10px;
+      margin-bottom: 2px;
     }
     button {
       border: none;
       border-radius: 12px;
-      padding: 12px 18px;
-      font-size: 16px;
-      font-weight: 800;
+      padding: 11px 18px;
+      font-size: 15px;
+      font-weight: 900;
       background: #22c55e;
       color: #0b1220;
-    }
-    .help {
-      margin-top: 14px;
-      text-align: center;
-      line-height: 1.5;
-      color: rgba(255,255,255,0.82);
-      font-size: 14px;
+      min-width: 140px;
     }
   </style>
 </head>
@@ -98,16 +95,11 @@
       <div id="itemTimer">남은 시간: -</div>
     </div>
 
-    <canvas id="game" width="400" height="700"></canvas>
+    <canvas id="game" width="400" height="620"></canvas>
 
     <div class="controls">
       <button id="restartBtn">다시 시작</button>
     </div>
-
-    <p class="help">
-      손가락으로 패들을 움직이고, 탭한 방향으로 공을 발사해.<br />
-      아이폰 Safari에서 열면 공유 버튼 → 홈 화면에 추가로 설치할 수 있어.
-    </p>
   </div>
 
   <script>
@@ -130,11 +122,19 @@
     const W = canvas.width;
     const H = canvas.height;
 
+    const BRICK_PALETTES = [
+      "#22c55e",
+      "#3b82f6",
+      "#a855f7",
+      "#f97316",
+      "#ef4444",
+      "#eab308"
+    ];
+
     const COLORS = {
       bg: "#0f172a",
       bg2: "#111827",
       paddle: "#ffffff",
-      greenBrick: "#22c55e",
       whiteBrick: "#ffffff",
       ball: "#fbbf24",
       item: "#38bdf8",
@@ -144,7 +144,7 @@
     const BASE_PADDLE = {
       width: 96,
       height: 14,
-      y: H - 54
+      y: H - 48
     };
 
     const BALL_RADIUS = 7;
@@ -153,16 +153,17 @@
     const BRICK = {
       cols: 8,
       width: 41,
-      height: 20,
+      height: 18,
       gap: 6,
       left: 12,
-      top: 92
+      top: 72
     };
 
     const ROW_STEP = BRICK.height + BRICK.gap;
     const ITEM_DURATION = 10000;
     const WHITE_RESPAWN_RATE = 0.38;
-    const ROW_FILL_RATE = 0.86;
+    const ROW_FILL_RATE = 0.88;
+    const LOVE_DURATION = 3000;
 
     let score = 0;
     let level = 1;
@@ -171,6 +172,11 @@
     let gameStarted = false;
     let lastTime = 0;
     let rowTimer = 0;
+    let loveCount = 0;
+    let celebration = false;
+    let celebrationEndsAt = 0;
+    let preservedBallCount = 1;
+    let gameOverStage = 0;
 
     const paddle = {
       x: W / 2 - BASE_PADDLE.width / 2,
@@ -196,6 +202,10 @@
       return performance.now();
     }
 
+    function getBrickColor() {
+      return BRICK_PALETTES[Math.floor((level - 1) / 10) % BRICK_PALETTES.length];
+    }
+
     function createBall(x, y, vx = 0, vy = 0, held = false) {
       return {
         x,
@@ -206,6 +216,19 @@
         held,
         splitCooldownUntil: 0
       };
+    }
+
+    function createHeldBallGroup(count) {
+      const cx = paddle.x + paddle.width / 2;
+      const y = activeItem?.type === "bowl"
+        ? paddle.y - paddle.height / 2 - 8
+        : paddle.y - BALL_RADIUS - 2;
+
+      balls = [];
+      for (let i = 0; i < count; i++) {
+        balls.push(createBall(cx, y, 0, 0, true));
+      }
+      gameStarted = false;
     }
 
     function currentBallSpeed() {
@@ -272,12 +295,7 @@
     }
 
     function getRowSpawnInterval() {
-      return Math.max(2200, 7600 - (level - 1) * 520);
-    }
-
-    function resetHeldBall() {
-      balls = [createBall(paddle.x + paddle.width / 2, paddle.y - BALL_RADIUS - 2, 0, 0, true)];
-      gameStarted = false;
+      return Math.max(1400, 7000 - (level - 1) * 320);
     }
 
     function fullReset() {
@@ -285,13 +303,19 @@
       level = 1;
       life = 1;
       gameOver = false;
+      gameStarted = false;
       rowTimer = 0;
+      loveCount = 0;
+      celebration = false;
+      celebrationEndsAt = 0;
+      preservedBallCount = 1;
       activeItem = null;
       items = [];
+      gameOverStage = 0;
       paddle.x = W / 2 - BASE_PADDLE.width / 2;
       resetPaddleGeometry();
       spawnInitialBricks();
-      resetHeldBall();
+      createHeldBallGroup(1);
       updateHud();
     }
 
@@ -606,11 +630,11 @@
       if (!circleRectCollision(ball, paddleRect) || ball.vy <= 0) return null;
 
       if (handleBowlCatch(ball)) {
-        return { type: "normal", balls: [ball] };
+        return { balls: [ball] };
       }
 
       if (activeItem?.type === "triangle") {
-        return { type: "split", balls: createSplitBallsFromTriangle(ball) };
+        return { balls: createSplitBallsFromTriangle(ball) };
       }
 
       const hit = (ball.x - (paddle.x + paddle.width / 2)) / (paddle.width / 2);
@@ -621,7 +645,36 @@
       ball.vy = -Math.abs(speed * Math.cos(angle));
       ball.y = paddle.y - ball.radius - 1;
 
-      return { type: "normal", balls: [ball] };
+      return { balls: [ball] };
+    }
+
+    function startCelebration() {
+      if (celebration || gameOver) return;
+      celebration = true;
+      celebrationEndsAt = nowMs() + LOVE_DURATION;
+      preservedBallCount = Math.max(1, balls.length);
+      loveCount += 1;
+      rowTimer = 0;
+      gameStarted = false;
+      items = [];
+      balls = [];
+      if (activeItem) {
+        activeItem.expiresAt += LOVE_DURATION;
+      }
+      updateHud();
+    }
+
+    function finishCelebration() {
+      celebration = false;
+      spawnInitialBricks();
+      createHeldBallGroup(preservedBallCount);
+      updateHud();
+    }
+
+    function setGameOver() {
+      gameOver = true;
+      gameStarted = false;
+      gameOverStage = 0;
     }
 
     function updateItems() {
@@ -658,7 +711,7 @@
     function checkBrickFloorDanger() {
       const dangerLine = paddle.y - 8;
       if (bricks.some((brick) => brick.y + brick.height >= dangerLine)) {
-        gameOver = true;
+        setGameOver();
       }
     }
 
@@ -714,12 +767,19 @@
       const hasMovingBall = balls.some((ball) => !ball.held);
 
       if (!hasHeldBall && !hasMovingBall) {
-        gameOver = true;
+        setGameOver();
       }
     }
 
     function update(dt) {
       if (gameOver) return;
+
+      if (celebration) {
+        if (nowMs() >= celebrationEndsAt) {
+          finishCelebration();
+        }
+        return;
+      }
 
       updateActiveItem();
       syncHeldBallsOnPaddle();
@@ -735,6 +795,12 @@
 
       updateItems();
       updateBalls();
+
+      if (!celebration && bricks.length === 0) {
+        startCelebration();
+        return;
+      }
+
       checkBrickFloorDanger();
     }
 
@@ -777,6 +843,8 @@
     }
 
     function drawBricks() {
+      const greenColor = getBrickColor();
+
       for (const brick of bricks) {
         if (brick.type === "green") {
           roundRect(
@@ -785,7 +853,7 @@
             brick.width,
             brick.height,
             6,
-            COLORS.greenBrick,
+            greenColor,
             "rgba(255,255,255,0.08)"
           );
         } else {
@@ -801,8 +869,8 @@
 
           ctx.fillStyle = "#0f172a";
           ctx.textAlign = "center";
-          ctx.font = "bold 13px sans-serif";
-          ctx.fillText(String(brick.hp), brick.x + brick.width / 2, brick.y + brick.height / 2 + 5);
+          ctx.font = "bold 12px sans-serif";
+          ctx.fillText(String(brick.hp), brick.x + brick.width / 2, brick.y + brick.height / 2 + 4);
         }
       }
     }
@@ -896,11 +964,11 @@
       }
 
       const heldCount = balls.filter((ball) => ball.held).length;
-      if (heldCount >= 2 && activeItem?.type === "bowl") {
+      if (heldCount >= 2) {
         ctx.fillStyle = COLORS.text;
         ctx.font = "bold 12px sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(`x${heldCount}`, paddle.x + paddle.width / 2, paddle.y - 28);
+        ctx.fillText(`x${heldCount}`, paddle.x + paddle.width / 2, paddle.y - 24);
       }
     }
 
@@ -912,32 +980,45 @@
       ctx.stroke();
     }
 
+    function drawCenteredText(lines) {
+      ctx.textAlign = "center";
+      ctx.fillStyle = COLORS.text;
+      const startY = H / 2 - (lines.length - 1) * 20;
+      lines.forEach((line, idx) => {
+        ctx.font = idx === 0 ? "bold 30px sans-serif" : "18px sans-serif";
+        ctx.fillText(line, W / 2, startY + idx * 38);
+      });
+    }
+
     function drawOverlay() {
-      if (!gameStarted && !gameOver) {
+      if (!gameStarted && !gameOver && !celebration) {
         ctx.fillStyle = "rgba(0,0,0,0.35)";
         ctx.fillRect(0, 0, W, H);
+        drawCenteredText(["탭해서 시작", "탭 위치를 향해 공이 날아가"]);
+      }
 
-        ctx.fillStyle = COLORS.text;
-        ctx.textAlign = "center";
-        ctx.font = "bold 28px sans-serif";
-        ctx.fillText("탭해서 시작", W / 2, H / 2 - 10);
-
-        ctx.font = "16px sans-serif";
-        ctx.fillText("탭 위치를 향해 공이 날아가", W / 2, H / 2 + 24);
+      if (celebration) {
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(0, 0, W, H);
+        drawCenteredText(["유미야 사랑해!", "3초 뒤 블록이 다시 시작돼"]);
       }
 
       if (gameOver) {
-        ctx.fillStyle = "rgba(0,0,0,0.58)";
+        ctx.fillStyle = "rgba(0,0,0,0.62)";
         ctx.fillRect(0, 0, W, H);
 
-        ctx.fillStyle = COLORS.text;
-        ctx.textAlign = "center";
-        ctx.font = "bold 32px sans-serif";
-        ctx.fillText("게임 오버", W / 2, H / 2 - 18);
-
-        ctx.font = "18px sans-serif";
-        ctx.fillText(`점수: ${score}`, W / 2, H / 2 + 16);
-        ctx.fillText(`레벨: ${level}`, W / 2, H / 2 + 44);
+        if (gameOverStage === 0) {
+          drawCenteredText([
+            "게임 오버",
+            `당신은 유미에게 ${loveCount}번 사랑한다고 말했습니다!`,
+            "한 번 더 탭해봐"
+          ]);
+        } else {
+          drawCenteredText([
+            "더 많이 사랑을 고백해보세요!",
+            "한 번 더 탭하면 초기화면"
+          ]);
+        }
       }
     }
 
@@ -952,7 +1033,17 @@
     }
 
     function handleTap(clientX, clientY) {
-      if (gameOver) return;
+      if (gameOver) {
+        if (gameOverStage === 0) {
+          gameOverStage = 1;
+        } else {
+          fullReset();
+        }
+        return;
+      }
+
+      if (celebration) return;
+
       const pos = getPointerCanvasPosition(clientX, clientY);
 
       if (balls.some((ball) => ball.held)) {
