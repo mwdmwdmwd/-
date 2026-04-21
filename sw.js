@@ -1,10 +1,10 @@
-const CACHE_NAME = 'yumi-brick-breaker-v4';
+const CACHE_NAME = 'yumi-brick-breaker-v5';
 const ASSETS = [
   './',
-  './index.html?v=4',
-  './styles.css?v=4',
-  './game.js?v=4',
-  './manifest.json?v=4',
+  './index.html?v=5',
+  './styles.css?v=5',
+  './game.js?v=5',
+  './manifest.json?v=5',
   './icon-192.png',
   './icon-512.png',
   './apple-touch-icon.png'

@@ -12,7 +12,7 @@ const pauseBtn = document.getElementById('pauseBtn');
 const W = canvas.width;
 const H = canvas.height;
 
-const STORAGE_KEY = 'yumi_brick_breaker_save_v2';
+const STORAGE_KEY = 'yumi_brick_breaker_save_v3';
 
 const THEMES = [
   { name: 'forest', bgTop: '#0f172a', bgBottom: '#111827', brick: '#22c55e', accent: '#38bdf8', boss: '#f59e0b', love: '#f472b6' },
@@ -139,6 +139,18 @@ function paddleBounceSpeed() {
   const mult = effectFlags().speedMult || 1;
   return currentBallSpeed() * mult;
 }
+function applySpeedMultiplierTransition(oldMult = 1, newMult = 1) {
+  if (!oldMult || oldMult <= 0) oldMult = 1;
+  if (!newMult || newMult <= 0) newMult = 1;
+  const ratio = newMult / oldMult;
+  if (Math.abs(ratio - 1) < 0.001) return;
+  for (const ball of balls) {
+    if (ball.held) continue;
+    ball.vx *= ratio;
+    ball.vy *= ratio;
+  }
+}
+
 
 function createBall(x, y, vx = 0, vy = 0, held = false) {
   return {
@@ -232,12 +244,14 @@ function effectDescriptorFromTypes(types) {
     'long+triangle': { label: '세모+긴 패들', effects: { triangle: true, long: true, splitCount: 3, splitSpeedMult: 1 } },
     'thick+triangle': { label: '세모+두꺼운 패들', effects: { triangle: true, thick: true, splitCount: 2, splitSpeedMult: 1.22, speedMult: 1.7 } },
     'bowl+triangle': { label: '그릇+세모', effects: { bowl: true, triangle: true, bowlSpread: true, splitCount: 2, splitSpeedMult: 1 } },
+    heart: { label: '하트', effects: { slow: true, speedMult: 0.5 } },
     'long+thick': { label: '롱+두꺼운 패들', effects: { long: true, thick: true, speedMult: 1.6 } }
   };
   return map[sorted] || map[types[types.length - 1]];
 }
 
 function setActiveItem(types, resetTimer = true) {
+  const oldMult = game.activeItem?.effects?.speedMult || 1;
   const descriptor = effectDescriptorFromTypes(types);
   game.activeItem = {
     label: descriptor.label,
@@ -245,15 +259,19 @@ function setActiveItem(types, resetTimer = true) {
     effects: descriptor.effects,
     expiresAt: resetTimer ? nowMs() + ITEM_DURATION : (game.activeItem?.expiresAt || (nowMs() + ITEM_DURATION))
   };
+  const newMult = descriptor.effects?.speedMult || 1;
+  applySpeedMultiplierTransition(oldMult, newMult);
   resetPaddleGeometry();
   syncHeldBallsOnPaddle();
 }
 
 function clearActiveItem() {
+  const oldMult = effectFlags().speedMult || 1;
   if (effectFlags().bowl) {
     releaseHeldBallsUpward();
   }
   game.activeItem = null;
+  applySpeedMultiplierTransition(oldMult, 1);
   resetPaddleGeometry();
 }
 
@@ -404,7 +422,7 @@ function spawnItem(x, y) {
     y,
     vy: 2.2,
     size: 18,
-    type: randomChoice(['triangle', 'bowl', 'thick', 'long'])
+    type: randomChoice(['triangle', 'bowl', 'thick', 'long', 'heart'])
   });
 }
 
@@ -429,7 +447,7 @@ function activateItem(type) {
     }
   } else if (activeTypes.length === 1) {
     const merged = effectDescriptorFromTypes([activeTypes[0], type]);
-    if (merged && !['세모','그릇','두꺼운 패들','긴 패들'].includes(merged.label)) {
+    if (merged && !['세모','그릇','두꺼운 패들','긴 패들','하트'].includes(merged.label)) {
       setActiveItem([activeTypes[0], type], true);
       addFloatingText('융합!', W / 2, H - 120, '#f59e0b', 22);
     } else {
@@ -437,6 +455,10 @@ function activateItem(type) {
     }
   } else {
     setActiveItem([type], true);
+  }
+
+  if (type === 'heart') {
+    addFloatingText('하트! 공 속도 절반', W / 2, H - 120, COLORS.heartBrick, 20);
   }
 
   resetPaddleGeometry();
@@ -950,6 +972,15 @@ function drawItems() {
       roundRect(item.x - 16, item.y - 9, 32, 18, 6, accent);
     } else if (item.type === 'long') {
       roundRect(item.x - 24, item.y - 7, 48, 14, 7, accent);
+    } else if (item.type === 'heart') {
+      ctx.save();
+      ctx.fillStyle = accent;
+      ctx.beginPath();
+      ctx.moveTo(item.x, item.y + 12);
+      ctx.bezierCurveTo(item.x - 18, item.y - 2, item.x - 18, item.y - 18, item.x, item.y - 8);
+      ctx.bezierCurveTo(item.x + 18, item.y - 18, item.x + 18, item.y - 2, item.x, item.y + 12);
+      ctx.fill();
+      ctx.restore();
     }
   }
 }
