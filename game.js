@@ -12,20 +12,20 @@ const pauseBtn = document.getElementById('pauseBtn');
 const W = canvas.width;
 const H = canvas.height;
 
-const STORAGE_KEY = 'yumi_brick_breaker_save_v3';
+const STORAGE_KEY = 'yumi_brick_breaker_save_v4';
 
 const THEMES = [
-  { name: 'forest', bgTop: '#0f172a', bgBottom: '#111827', brick: '#22c55e', accent: '#38bdf8', boss: '#f59e0b', love: '#f472b6' },
   { name: 'rose', bgTop: '#3b0764', bgBottom: '#1e1b4b', brick: '#fb7185', accent: '#f9a8d4', boss: '#f97316', love: '#fda4af' },
   { name: 'ocean', bgTop: '#082f49', bgBottom: '#172554', brick: '#38bdf8', accent: '#67e8f9', boss: '#60a5fa', love: '#93c5fd' },
   { name: 'sunset', bgTop: '#451a03', bgBottom: '#7c2d12', brick: '#f97316', accent: '#fdba74', boss: '#facc15', love: '#fde68a' },
-  { name: 'violet', bgTop: '#2e1065', bgBottom: '#1e293b', brick: '#a78bfa', accent: '#c4b5fd', boss: '#e879f9', love: '#f0abfc' }
+  { name: 'violet', bgTop: '#2e1065', bgBottom: '#1e293b', brick: '#a78bfa', accent: '#c4b5fd', boss: '#e879f9', love: '#f0abfc' },
+  { name: 'pearl', bgTop: '#1f2937', bgBottom: '#111827', brick: '#f8fafc', accent: '#cbd5e1', boss: '#f59e0b', love: '#fda4af' }
 ];
 
 const COLORS = {
   paddle: '#ffffff',
   whiteBrick: '#ffffff',
-  lockBrick: '#9ca3af',
+  numberBrick: '#94a3b8',
   bombBrick: '#ef4444',
   heartBrick: '#ec4899',
   ball: '#fbbf24',
@@ -73,7 +73,8 @@ const game = {
   stageType: 'normal',
   bossHp: 0,
   bossMaxHp: 0,
-  activeItem: null,
+  mainItem: null,
+  speedEffects: { thickUntil: 0, heartUntil: 0 },
   floatingTexts: [],
   particles: []
 };
@@ -131,26 +132,58 @@ function currentBallSpeed() {
   return BASE_BALL_SPEED + (game.level - 1) * 0.28;
 }
 
+function currentNumberBrickValue() {
+  return Math.max(1, Math.floor(game.level / 20));
+}
+
+function numberBrickChance() {
+  const tier = Math.floor(game.level / 20);
+  if (tier <= 0) return 0;
+  return Math.min(0.06 + (tier - 1) * 0.03, 0.22);
+}
+
+function mainEffects() {
+  return game.mainItem?.effects || {};
+}
+
+function isSpeedEffectActive(type, at = nowMs()) {
+  const key = type === 'thick' ? 'thickUntil' : 'heartUntil';
+  return (game.speedEffects[key] || 0) > at;
+}
+
+function speedMultiplierAt(at = nowMs()) {
+  let mult = 1;
+  if (isSpeedEffectActive('thick', at)) mult *= 1.5;
+  if (isSpeedEffectActive('heart', at)) mult *= 0.5;
+  return mult;
+}
+
+function targetBallSpeedAt(at = nowMs()) {
+  return Math.max(BASE_BALL_SPEED, currentBallSpeed() * speedMultiplierAt(at));
+}
+
 function effectFlags() {
-  return game.activeItem?.effects || {};
+  return {
+    ...mainEffects(),
+    thickSpeed: isSpeedEffectActive('thick'),
+    heartSlow: isSpeedEffectActive('heart')
+  };
 }
 
 function paddleBounceSpeed() {
-  const mult = effectFlags().speedMult || 1;
-  return currentBallSpeed() * mult;
+  return targetBallSpeedAt();
 }
-function applySpeedMultiplierTransition(oldMult = 1, newMult = 1) {
-  if (!oldMult || oldMult <= 0) oldMult = 1;
-  if (!newMult || newMult <= 0) newMult = 1;
-  const ratio = newMult / oldMult;
-  if (Math.abs(ratio - 1) < 0.001) return;
+
+function applyBallSpeedTarget(newTarget) {
   for (const ball of balls) {
     if (ball.held) continue;
+    const mag = Math.hypot(ball.vx, ball.vy);
+    if (!mag) continue;
+    const ratio = newTarget / mag;
     ball.vx *= ratio;
     ball.vy *= ratio;
   }
 }
-
 
 function createBall(x, y, vx = 0, vy = 0, held = false) {
   return {
@@ -164,7 +197,7 @@ function createBall(x, y, vx = 0, vy = 0, held = false) {
   };
 }
 
-function createBrick(x, y, type = 'green') {
+function createBrick(x, y, type = 'normal', extra = {}) {
   const brick = {
     x,
     y,
@@ -174,16 +207,18 @@ function createBrick(x, y, type = 'green') {
     hp: 1,
     maxHp: 1,
     row: Math.round((y - BRICK.top) / ROW_STEP),
-    col: Math.round((x - BRICK.left) / (BRICK.width + BRICK.gap))
+    col: Math.round((x - BRICK.left) / (BRICK.width + BRICK.gap)),
+    numberValue: extra.numberValue || 0
   };
 
   if (type === 'white') {
     brick.hp = 3;
     brick.maxHp = 3;
   }
-  if (type === 'lock') {
-    brick.hp = 4;
-    brick.maxHp = 4;
+  if (type === 'number') {
+    brick.numberValue = extra.numberValue || currentNumberBrickValue();
+    brick.hp = brick.numberValue;
+    brick.maxHp = brick.numberValue;
   }
   if (type === 'boss') {
     brick.width = W - 90;
@@ -239,52 +274,44 @@ function effectDescriptorFromTypes(types) {
   const map = {
     triangle: { label: '세모', effects: { triangle: true, splitCount: 2, splitSpeedMult: 1 } },
     bowl: { label: '그릇', effects: { bowl: true } },
-    thick: { label: '두꺼운 패들', effects: { thick: true, speedMult: 1.5 } },
     long: { label: '긴 패들', effects: { long: true } },
     'long+triangle': { label: '세모+긴 패들', effects: { triangle: true, long: true, splitCount: 3, splitSpeedMult: 1 } },
-    'thick+triangle': { label: '세모+두꺼운 패들', effects: { triangle: true, thick: true, splitCount: 2, splitSpeedMult: 1.22, speedMult: 1.7 } },
     'bowl+triangle': { label: '그릇+세모', effects: { bowl: true, triangle: true, bowlSpread: true, splitCount: 2, splitSpeedMult: 1 } },
-    heart: { label: '하트', effects: { slow: true, speedMult: 0.5 } },
-    'long+thick': { label: '롱+두꺼운 패들', effects: { long: true, thick: true, speedMult: 1.6 } }
+    'bowl+long': { label: '그릇+긴 패들', effects: { bowl: true, long: true } }
   };
   return map[sorted] || map[types[types.length - 1]];
 }
 
-function setActiveItem(types, resetTimer = true) {
-  const oldMult = game.activeItem?.effects?.speedMult || 1;
+function setMainItem(types, resetTimer = true) {
   const descriptor = effectDescriptorFromTypes(types);
-  game.activeItem = {
+  game.mainItem = {
     label: descriptor.label,
     types: [...types],
     effects: descriptor.effects,
-    expiresAt: resetTimer ? nowMs() + ITEM_DURATION : (game.activeItem?.expiresAt || (nowMs() + ITEM_DURATION))
+    expiresAt: resetTimer ? nowMs() + ITEM_DURATION : (game.mainItem?.expiresAt || (nowMs() + ITEM_DURATION))
   };
-  const newMult = descriptor.effects?.speedMult || 1;
-  applySpeedMultiplierTransition(oldMult, newMult);
   resetPaddleGeometry();
   syncHeldBallsOnPaddle();
 }
 
-function clearActiveItem() {
-  const oldMult = effectFlags().speedMult || 1;
-  if (effectFlags().bowl) {
+function clearMainItem() {
+  if (mainEffects().bowl) {
     releaseHeldBallsUpward();
   }
-  game.activeItem = null;
-  applySpeedMultiplierTransition(oldMult, 1);
+  game.mainItem = null;
   resetPaddleGeometry();
 }
 
 function resetPaddleGeometry() {
-  const fx = effectFlags();
+  const fx = mainEffects();
   paddle.width = BASE_PADDLE.width * (fx.long ? 2 : 1);
-  paddle.height = BASE_PADDLE.height * (fx.thick ? 2.1 : 1);
+  paddle.height = BASE_PADDLE.height;
   paddle.x = clamp(paddle.x, 0, W - paddle.width);
 }
 
 function syncHeldBallsOnPaddle() {
   const cx = paddle.x + paddle.width / 2;
-  const y = effectFlags().bowl ? paddle.y - paddle.height / 2 - 10 : paddle.y - BALL_RADIUS - 2;
+  const y = mainEffects().bowl ? paddle.y - paddle.height / 2 - 10 : paddle.y - BALL_RADIUS - 2;
   for (const ball of balls) {
     if (ball.held) {
       ball.x = cx;
@@ -301,14 +328,23 @@ function updateHud() {
   loveEl.textContent = `이번 고백: ${game.runLove}`;
   totalLoveEl.textContent = `총 고백: ${game.totalLove}`;
 
-  if (game.activeItem) {
-    activeEl.textContent = `장착: ${game.activeItem.label}`;
-    const remain = Math.max(0, Math.ceil((game.activeItem.expiresAt - nowMs()) / 1000));
-    timerEl.textContent = `남은 시간: ${remain}s`;
-  } else {
-    activeEl.textContent = '장착: 없음';
-    timerEl.textContent = '남은 시간: -';
+  const labels = [];
+  const timers = [];
+  if (game.mainItem) {
+    labels.push(game.mainItem.label);
+    timers.push(`${game.mainItem.label} ${Math.max(0, Math.ceil((game.mainItem.expiresAt - nowMs()) / 1000))}s`);
   }
+  if (isSpeedEffectActive('thick')) {
+    labels.push('두꺼운 패들(속도)');
+    timers.push(`두꺼운 ${Math.max(0, Math.ceil((game.speedEffects.thickUntil - nowMs()) / 1000))}s`);
+  }
+  if (isSpeedEffectActive('heart')) {
+    labels.push('하트(감속)');
+    timers.push(`하트 ${Math.max(0, Math.ceil((game.speedEffects.heartUntil - nowMs()) / 1000))}s`);
+  }
+
+  activeEl.textContent = `장착: ${labels.length ? labels.join(' + ') : '없음'}`;
+  timerEl.textContent = `남은 시간: ${timers.length ? timers.join(' / ') : '-'}`;
 
   pauseBtn.textContent = game.status === 'paused' ? '▶' : '❚❚';
 }
@@ -355,7 +391,7 @@ function launchHeldBalls(targetX, targetY) {
   let dy = targetY - paddle.y;
   if (dy > -20) dy = -20;
   const len = Math.hypot(dx, dy) || 1;
-  const speed = currentBallSpeed();
+  const speed = targetBallSpeedAt();
   const baseVx = (dx / len) * speed;
   const baseVy = (dy / len) * speed;
 
@@ -391,7 +427,7 @@ function launchHeldBalls(targetX, targetY) {
 function releaseHeldBallsUpward() {
   const heldBalls = balls.filter((ball) => ball.held);
   if (!heldBalls.length) return;
-  const speed = currentBallSpeed();
+  const speed = targetBallSpeedAt();
   for (const ball of heldBalls) {
     ball.held = false;
     ball.vx = 0;
@@ -417,12 +453,14 @@ function triangleBounds() {
 }
 
 function spawnItem(x, y) {
+  const pool = ['triangle', 'bowl', 'thick', 'long'];
+  if (balls.length >= 3) pool.push('heart');
   items.push({
     x,
     y,
     vy: 2.2,
     size: 18,
-    type: randomChoice(['triangle', 'bowl', 'thick', 'long', 'heart'])
+    type: randomChoice(pool)
   });
 }
 
@@ -435,34 +473,54 @@ function removeBottomRows(count = 2) {
   }
 }
 
-function activateItem(type) {
-  const activeTypes = game.activeItem?.types || [];
+function activateSpeedItem(type) {
+  const key = type === 'thick' ? 'thickUntil' : 'heartUntil';
+  const alreadyActive = (game.speedEffects[key] || 0) > nowMs();
+  if (alreadyActive) {
+    removeBottomRows(2);
+    addFloatingText('같은 아이템! 아래 2줄 삭제!', W / 2, H - 120, currentTheme().accent, 18);
+  }
+  game.speedEffects[key] = nowMs() + ITEM_DURATION;
+  applyBallSpeedTarget(targetBallSpeedAt());
+  if (type === 'heart') {
+    addFloatingText('하트! 공 속도 절반', W / 2, H - 120, COLORS.heartBrick, 20);
+  } else {
+    addFloatingText('속도 증가!', W / 2, H - 120, currentTheme().accent, 20);
+  }
+}
+
+function activateMainItem(type) {
+  const activeTypes = game.mainItem?.types || [];
   const samePickup = activeTypes.includes(type);
 
   if (samePickup) {
     removeBottomRows(2);
     addFloatingText('같은 아이템! 아래 2줄 삭제!', W / 2, H - 120, currentTheme().accent, 18);
-    if (game.activeItem) {
-      game.activeItem.expiresAt = nowMs() + ITEM_DURATION;
+    if (game.mainItem) {
+      game.mainItem.expiresAt = nowMs() + ITEM_DURATION;
     }
   } else if (activeTypes.length === 1) {
     const merged = effectDescriptorFromTypes([activeTypes[0], type]);
-    if (merged && !['세모','그릇','두꺼운 패들','긴 패들','하트'].includes(merged.label)) {
-      setActiveItem([activeTypes[0], type], true);
+    if (merged && !['세모', '그릇', '긴 패들'].includes(merged.label)) {
+      setMainItem([activeTypes[0], type], true);
       addFloatingText('융합!', W / 2, H - 120, '#f59e0b', 22);
     } else {
-      setActiveItem([type], true);
+      setMainItem([type], true);
     }
   } else {
-    setActiveItem([type], true);
-  }
-
-  if (type === 'heart') {
-    addFloatingText('하트! 공 속도 절반', W / 2, H - 120, COLORS.heartBrick, 20);
+    setMainItem([type], true);
   }
 
   resetPaddleGeometry();
   syncHeldBallsOnPaddle();
+}
+
+function activateItem(type) {
+  if (type === 'thick' || type === 'heart') {
+    activateSpeedItem(type);
+  } else {
+    activateMainItem(type);
+  }
 }
 
 function circleRectCollision(ball, rect) {
@@ -478,24 +536,31 @@ function spawnNormalStage() {
   game.stageType = game.level % 10 === 0 ? 'boss' : 'normal';
 
   if (game.stageType === 'boss') {
+    const numberValue = currentNumberBrickValue();
     bricks.push(createBrick(0, 0, 'boss'));
-    bricks.push(createBrick(BRICK.left + 1 * (BRICK.width + BRICK.gap), 240, 'lock'));
-    bricks.push(createBrick(BRICK.left + 6 * (BRICK.width + BRICK.gap), 240, 'lock'));
+    bricks.push(createBrick(BRICK.left + 1 * (BRICK.width + BRICK.gap), 240, 'number', { numberValue }));
+    bricks.push(createBrick(BRICK.left + 6 * (BRICK.width + BRICK.gap), 240, 'number', { numberValue }));
     bricks.push(createBrick(BRICK.left + 0 * (BRICK.width + BRICK.gap), 266, 'heart'));
     bricks.push(createBrick(BRICK.left + 7 * (BRICK.width + BRICK.gap), 266, 'bomb'));
     return;
   }
 
+  const numberChance = numberBrickChance();
+  const numberValue = currentNumberBrickValue();
   for (let r = 0; r < 4; r += 1) {
     for (let c = 0; c < BRICK.cols; c += 1) {
       const x = BRICK.left + c * (BRICK.width + BRICK.gap);
       const y = BRICK.top + r * ROW_STEP;
       const roll = Math.random();
-      let type = 'green';
+      let type = 'normal';
+      let extra = {};
       if (roll < 0.06) type = 'heart';
       else if (roll < 0.12) type = 'bomb';
-      else if (roll < 0.18 && game.level >= 3) type = 'lock';
-      bricks.push(createBrick(x, y, type));
+      else if (roll < 0.12 + numberChance) {
+        type = 'number';
+        extra.numberValue = numberValue;
+      }
+      bricks.push(createBrick(x, y, type, extra));
     }
   }
 }
@@ -521,7 +586,8 @@ function fullReset() {
   game.combo = 0;
   game.comboUntil = 0;
   game.loveMessageUntil = 0;
-  game.activeItem = null;
+  game.mainItem = null;
+  game.speedEffects = { thickUntil: 0, heartUntil: 0 };
   game.floatingTexts = [];
   game.particles = [];
   items = [];
@@ -594,10 +660,10 @@ function removeBrick(brick, options = {}) {
 
   const centerX = brick.x + brick.width / 2;
   const centerY = brick.y + brick.height / 2;
-  const color = brick.type === 'green' ? currentTheme().brick : brick.type === 'heart' ? COLORS.heartBrick : brick.type === 'bomb' ? COLORS.bombBrick : brick.type === 'lock' ? COLORS.lockBrick : currentTheme().accent;
+  const color = brick.type === 'normal' ? currentTheme().brick : brick.type === 'heart' ? COLORS.heartBrick : brick.type === 'bomb' ? COLORS.bombBrick : brick.type === 'number' ? COLORS.numberBrick : currentTheme().accent;
   addParticles(centerX, centerY, color, brick.type === 'boss' ? 28 : 12);
 
-  if (brick.type === 'green' && !options.noSpawn && Math.random() < WHITE_RESPAWN_RATE) {
+  if (brick.type === 'normal' && !options.noSpawn && Math.random() < WHITE_RESPAWN_RATE) {
     const occupied = bricks.some((b) => b.x === brick.x && b.y === brick.y);
     if (!occupied) bricks.push(createBrick(brick.x, brick.y, 'white'));
   }
@@ -747,9 +813,22 @@ function updateItems() {
 }
 
 function updateActiveItem() {
-  if (!game.activeItem) return;
-  if (nowMs() >= game.activeItem.expiresAt) {
-    clearActiveItem();
+  const now = nowMs();
+  if (game.mainItem && now >= game.mainItem.expiresAt) {
+    clearMainItem();
+  }
+
+  let changed = false;
+  if (game.speedEffects.thickUntil && game.speedEffects.thickUntil <= now) {
+    game.speedEffects.thickUntil = 0;
+    changed = true;
+  }
+  if (game.speedEffects.heartUntil && game.speedEffects.heartUntil <= now) {
+    game.speedEffects.heartUntil = 0;
+    changed = true;
+  }
+  if (changed) {
+    applyBallSpeedTarget(targetBallSpeedAt());
   }
 }
 
@@ -758,15 +837,21 @@ function addNewRow() {
   for (const brick of bricks) brick.y += ROW_STEP;
 
   let created = 0;
+  const numberChance = numberBrickChance();
+  const numberValue = currentNumberBrickValue();
   for (let c = 0; c < BRICK.cols; c += 1) {
     if (Math.random() < ROW_FILL_RATE || created < 2) {
       const x = BRICK.left + c * (BRICK.width + BRICK.gap);
-      let type = 'green';
+      let type = 'normal';
+      let extra = {};
       const roll = Math.random();
       if (roll < 0.05) type = 'heart';
       else if (roll < 0.10) type = 'bomb';
-      else if (roll < 0.16 && game.level >= 4) type = 'lock';
-      bricks.push(createBrick(x, BRICK.top, type));
+      else if (roll < 0.10 + numberChance) {
+        type = 'number';
+        extra.numberValue = numberValue;
+      }
+      bricks.push(createBrick(x, BRICK.top, type, extra));
       created += 1;
     }
   }
@@ -911,14 +996,14 @@ function drawBricks() {
     let fill = theme.brick;
     let stroke = 'rgba(255,255,255,0.08)';
     if (brick.type === 'white') fill = COLORS.whiteBrick;
-    if (brick.type === 'lock') fill = COLORS.lockBrick;
+    if (brick.type === 'number') fill = COLORS.numberBrick;
     if (brick.type === 'bomb') fill = COLORS.bombBrick;
     if (brick.type === 'heart') fill = COLORS.heartBrick;
     if (brick.type === 'boss') fill = theme.boss;
 
     roundRect(brick.x, brick.y, brick.width, brick.height, brick.type === 'boss' ? 16 : 6, fill, stroke);
 
-    if (brick.type === 'white' || brick.type === 'lock') {
+    if (brick.type === 'white' || brick.type === 'number') {
       ctx.fillStyle = '#0f172a';
       ctx.font = 'bold 13px sans-serif';
       ctx.textAlign = 'center';
@@ -1012,8 +1097,17 @@ function drawPaddle() {
     ctx.lineTo(bowl.x + bowl.width - 6, bowl.y + 12);
     ctx.stroke();
   }
-  if (fx.thick) {
-    roundRect(paddle.x + 10, paddle.y + 4, paddle.width - 20, paddle.height - 8, 6, accent);
+  if (fx.thickSpeed) {
+    ctx.fillStyle = accent;
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('≫', paddle.x + paddle.width / 2, paddle.y - 8);
+  }
+  if (fx.heartSlow) {
+    ctx.fillStyle = COLORS.heartBrick;
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('♥', paddle.x + paddle.width / 2, paddle.y - 24);
   }
 }
 
