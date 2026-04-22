@@ -40,7 +40,7 @@ const LOVE_DELAY = 3000;
 const LASER_INTERVAL = 7000;
 const MISSILE_INTERVAL = 380;
 const MAX_STAGE_ROW_INTERVAL = 8000;
-const CORE_ITEM_STAGES = new Set([1, 2, 4, 8]);
+const CORE_DROP_CHANCE = 0.08;
 
 const save = loadSave();
 const state = {
@@ -74,7 +74,8 @@ const state = {
   gameOverTapCount: 0,
   selectedCoreUntil: 0,
   shopOffers: [],
-  coreDropAvailable: true,
+  heartCycleProgress: 0,
+  heartScheduledRow: 1 + Math.floor(Math.random() * 5),
   itemLevels: {
     triangle: 0,
     long: 0,
@@ -129,10 +130,6 @@ function nowMs() { return performance.now(); }
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 function rand(min, max) { return min + Math.random() * (max - min); }
 function choice(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-
-function coreSpawnScheduled(stage) {
-  return CORE_ITEM_STAGES.has(stage) || (stage > 8 && (stage - 8) % 8 === 0);
-}
 
 function mainFusionText() {
   const i = state.itemLevels;
@@ -295,6 +292,9 @@ function allBlocksCleared() {
 function createStageRows() {
   bricks = [];
   resetPaddle();
+  state.heartCycleProgress = 0;
+  state.heartScheduledRow = 1 + Math.floor(Math.random() * 5);
+  const heartCol = Math.floor(rand(0, BRICK.cols));
   const numberPlan = currentNumberBlockPlan();
   const protectedCols = new Set();
   if (numberPlan.count > 0) {
@@ -304,29 +304,29 @@ function createStageRows() {
     for (let c = 0; c < BRICK.cols; c += 1) {
       let type = 'normal';
       let hp = 1;
-      if (protectedCols.has(c) && r >= START_ROWS - 2) {
+      if (r === 0 && c === heartCol) {
+        type = 'heart';
+      } else if (protectedCols.has(c) && r >= START_ROWS - 2) {
         type = 'number';
         hp = numberPlan.hp;
       }
       bricks.push(createBrick(c, r, type, hp));
     }
   }
-  spawnStageHeartBlock();
 }
 
-function spawnStageHeartBlock() {
-  const liveHeart = bricks.some((b) => !b.destroyed && b.type === 'heart');
-  if (liveHeart) return;
-  const row = Math.floor(rand(0, 5));
-  const col = Math.floor(rand(0, BRICK.cols));
-  const existing = findBrickAtGrid(col, row);
-  if (existing && existing.type !== 'boss') {
-    existing.type = 'heart';
-    existing.hp = 1;
-    existing.maxHp = 1;
-    return;
+function maybeMarkNewRowHeart(newRowBricks) {
+  state.heartCycleProgress += 1;
+  if (state.heartCycleProgress === state.heartScheduledRow && newRowBricks.length) {
+    const target = choice(newRowBricks);
+    target.type = 'heart';
+    target.hp = 1;
+    target.maxHp = 1;
   }
-  bricks.push(createBrick(col, row, 'heart', 1));
+  if (state.heartCycleProgress >= 5) {
+    state.heartCycleProgress = 0;
+    state.heartScheduledRow = 1 + Math.floor(Math.random() * 5);
+  }
 }
 
 function createBossStage() {
@@ -334,10 +334,11 @@ function createBossStage() {
   const hp = state.stage + 10;
   state.bossMaxHp = hp;
   state.bossHp = hp;
-  state.bossSpawnAnim = 3 * ROW_STEP;
+  const spawnY = BRICK.top - 3 * ROW_STEP;
   bricks.push({
     x: BRICK.left,
-    y: BRICK.top - state.bossSpawnAnim,
+    y: spawnY,
+    targetY: BRICK.top,
     width: W - 8,
     height: BRICK.height * 3 + BRICK.gap * 2,
     type: 'boss',
@@ -351,7 +352,6 @@ function initStage() {
   state.rowTimer = 0;
   state.bossStage = state.stage % 10 === 0;
   state.destroyedThisStage = 0;
-  state.coreDropAvailable = coreSpawnScheduled(state.stage);
   if (!balls.length) {
     balls = [makeBall(paddle.x + paddle.width / 2, paddle.y - 12)];
     balls[0].held = true;
@@ -373,6 +373,8 @@ function fullReset() {
   state.lastMissileAt = nowMs();
   state.gameOverTapCount = 0;
   state.shopOffers = [];
+  state.heartCycleProgress = 0;
+  state.heartScheduledRow = 1 + Math.floor(Math.random() * 5);
   state.itemLevels = { triangle: 0, long: 0, vlaser: 0, hlaser: 0 };
   state.upgrades = { ...save.upgrades, ...state.upgrades };
   bricks = [];
@@ -411,10 +413,10 @@ function showStartOverlay() {
   openOverlay(`
     <div class="modal">
       <h2>탭해서 시작</h2>
-      <p>20개를 부수면 다음 스테이지로 넘어가고, 10스테이지마다 보스 행이 내려온다.</p>
+      <p>20개를 부수면 다음 스테이지. 10스테이지마다 거대한 보스 블록이 위에서 내려온다.</p>
       <div class="cards cols-2">
         <div class="card"><h3>하트 상점</h3><div class="desc">왼쪽 아래 ♥ 버튼으로 5/10/15 하트 카드 중 하나를 고를 수 있어.</div></div>
-        <div class="card"><h3>코어 아이템</h3><div class="desc">특정 스테이지엔 코어 드롭이 한 번 떨어져. 패들로 먹어야 레벨이 오른다.</div></div>
+        <div class="card"><h3>코어 아이템</h3><div class="desc">일반/숫자 블록을 깨면 낮은 확률로 세모 · 긴 패들 · 세로 · 가로 번개가 떨어진다.</div></div>
       </div>
       <div class="actions"><button id="startRunBtn" class="primary-btn" style="flex:1">시작</button></div>
     </div>
@@ -593,8 +595,6 @@ function stageAdvance() {
   state.bossStage = state.stage % 10 === 0;
   state.destroyedThisStage = 0;
   state.rowTimer = 0;
-  state.coreDropAvailable = coreSpawnScheduled(state.stage);
-  spawnStageHeartBlock();
   if (state.bossStage) createBossStage();
   updateHUD();
   addFloatingText(`STAGE ${state.stage}`, W / 2, H / 2, theme().accent, 22);
@@ -622,8 +622,7 @@ function destroyBrick(brick, silent = false) {
     persistSave();
     updateHUD();
   }
-  if (!silent && state.coreDropAvailable && brick.type !== 'heart' && brick.type !== 'boss') {
-    state.coreDropAvailable = false;
+  if (!silent && brick.type !== 'heart' && brick.type !== 'boss' && Math.random() < CORE_DROP_CHANCE) {
     spawnCoreDropFromBrick(brick);
   }
   if (brick.type === 'boss') {
@@ -711,18 +710,27 @@ function spawnSelfSplit(ball) {
 }
 
 function addNewRow() {
-  bricks.filter((b) => !b.destroyed && b.type !== 'boss').forEach((b) => {
-    b.row += 1;
-    b.y += ROW_STEP;
+  bricks.filter((b) => !b.destroyed).forEach((b) => {
+    if (b.type === 'boss') {
+      b.y += ROW_STEP;
+      b.targetY = (b.targetY ?? b.y) + ROW_STEP;
+    } else {
+      b.row += 1;
+      b.y += ROW_STEP;
+    }
   });
   const plan = currentNumberBlockPlan();
   const numberCols = new Set();
   while (numberCols.size < plan.count) numberCols.add(Math.floor(rand(0, BRICK.cols)));
+  const newRowBricks = [];
   for (let c = 0; c < BRICK.cols; c += 1) {
     const type = numberCols.has(c) ? 'number' : 'normal';
     const hp = type === 'number' ? plan.hp : 1;
-    bricks.push(createBrick(c, 0, type, hp));
+    const brick = createBrick(c, 0, type, hp);
+    bricks.push(brick);
+    newRowBricks.push(brick);
   }
+  maybeMarkNewRowHeart(newRowBricks);
 }
 
 function randomUniqueIndexes(total, count) {
@@ -822,9 +830,11 @@ function handleBallBrickCollision(ball) {
 
 function updateBossAnimation(dt) {
   const boss = bricks.find((b) => !b.destroyed && b.type === 'boss');
-  if (!boss || state.bossSpawnAnim <= 0) return;
-  state.bossSpawnAnim = Math.max(0, state.bossSpawnAnim - dt * 0.12);
-  boss.y = BRICK.top + ROW_STEP - state.bossSpawnAnim;
+  if (!boss) return;
+  if (boss.targetY == null) boss.targetY = boss.y;
+  if (boss.y < boss.targetY) {
+    boss.y = Math.min(boss.targetY, boss.y + dt * 0.12);
+  }
 }
 
 function updateBalls(dt) {
@@ -911,7 +921,7 @@ function updateRows(dt) {
   state.rowTimer += dt;
   if (state.rowTimer >= rowIntervalMs()) {
     state.rowTimer = 0;
-    if (!state.bossStage) addNewRow();
+    addNewRow();
   }
 }
 
@@ -943,7 +953,7 @@ function updateEffects(dt) {
 }
 
 function checkDanger() {
-  if (bricks.some((b) => !b.destroyed && b.type !== 'boss' && b.y + b.height >= paddle.y - 6)) {
+  if (bricks.some((b) => !b.destroyed && b.y + b.height >= paddle.y - 6)) {
     triggerGameOver();
   }
 }
@@ -952,7 +962,6 @@ function update(dt) {
   if (state.status === 'love') {
     if (nowMs() >= state.loveUntil) {
       closeOverlay();
-      stageAdvance();
       balls = balls.length ? balls : [makeBall(paddle.x + paddle.width / 2, paddle.y - 12)];
       balls.forEach((b) => { b.paddleHits = 0; });
       state.status = 'playing';
@@ -1173,7 +1182,6 @@ function drawFloatingTexts() {
 }
 
 function drawBossBar() {
-  if (!state.bossStage) return;
   const boss = bricks.find((b) => !b.destroyed && b.type === 'boss');
   if (!boss) return;
   const x = 42;
