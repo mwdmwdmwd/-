@@ -13,7 +13,7 @@ const overlayEl = document.getElementById('overlay');
 
 const W = canvas.width;
 const H = canvas.height;
-const STORAGE_KEY = 'yumi_brick_breaker_stage_shop_v7';
+const STORAGE_KEY = 'yumi_brick_breaker_stage_shop_v10';
 
 const THEMES = [
   { top: '#1e1b4b', bottom: '#0f172a', block: '#f472b6', number: '#fbcfe8', boss: '#fb7185', accent: '#f9a8d4', line: '#fdf2f8' },
@@ -40,7 +40,7 @@ const LOVE_DELAY = 3000;
 const LASER_INTERVAL = 7000;
 const MISSILE_INTERVAL = 380;
 const MAX_STAGE_ROW_INTERVAL = 8000;
-const CORE_DROP_CHANCE = 0.08;
+const CORE_DROP_CHANCE = 0.1;
 
 const save = loadSave();
 const state = {
@@ -159,9 +159,10 @@ function spawnCoreDropFromBrick(brick) {
   items.push({
     x: brick.x + brick.width / 2,
     y: brick.y + brick.height / 2,
-    vy: 1.6,
+    vy: 1.15,
     type: randomCoreType(),
-    size: 18,
+    size: 22,
+    collectAfter: nowMs() + 450,
   });
 }
 
@@ -191,9 +192,7 @@ function dronePower(side) {
 
 function rowIntervalMs() {
   const bucket = Math.floor((state.stage - 1) / 10);
-  if (bucket === 0) return 20000;
-  const interval = 15000 - (bucket - 1) * 1000;
-  return Math.max(MAX_STAGE_ROW_INTERVAL, interval);
+  return Math.max(3000, 8000 - bucket * 1000);
 }
 
 function currentNumberBlockPlan() {
@@ -906,9 +905,11 @@ function collectCoreItem(item) {
 }
 
 function updateItems() {
+  const now = nowMs();
   for (const item of items) item.y += item.vy;
   items = items.filter((item) => {
-    const caught = item.y + item.size >= paddle.y && item.y - item.size <= paddle.y + paddle.height && item.x >= paddle.x && item.x <= paddle.x + paddle.width;
+    const canCollect = now >= (item.collectAfter || 0);
+    const caught = canCollect && item.y + item.size >= paddle.y && item.y - item.size <= paddle.y + paddle.height && item.x >= paddle.x && item.x <= paddle.x + paddle.width;
     if (caught) {
       collectCoreItem(item);
       return false;
@@ -1047,9 +1048,19 @@ function drawItems() {
   for (const item of items) {
     ctx.save();
     ctx.translate(item.x, item.y);
-    ctx.strokeStyle = theme().accent;
+    ctx.strokeStyle = '#ffffff';
     ctx.fillStyle = theme().accent;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2.5;
+
+    ctx.beginPath();
+    ctx.arc(0, 0, item.size, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(15,23,42,0.72)';
+    ctx.fill();
+    ctx.strokeStyle = theme().accent;
+    ctx.stroke();
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.fillStyle = theme().accent;
     if (item.type === 'triangle') {
       ctx.beginPath();
       ctx.moveTo(0, -14);
@@ -1057,8 +1068,9 @@ function drawItems() {
       ctx.lineTo(13, 10);
       ctx.closePath();
       ctx.fill();
+      ctx.stroke();
     } else if (item.type === 'long') {
-      roundRect(-22, -6, 44, 12, 6, theme().accent, null);
+      roundRect(-22, -6, 44, 12, 6, theme().accent, '#ffffff');
     } else if (item.type === 'vlaser') {
       ctx.beginPath();
       ctx.moveTo(0, -16);
@@ -1069,6 +1081,7 @@ function drawItems() {
       ctx.lineTo(0, 1);
       ctx.closePath();
       ctx.fill();
+      ctx.stroke();
     } else if (item.type === 'hlaser') {
       ctx.rotate(Math.PI / 2);
       ctx.beginPath();
@@ -1080,6 +1093,7 @@ function drawItems() {
       ctx.lineTo(0, 1);
       ctx.closePath();
       ctx.fill();
+      ctx.stroke();
     }
     ctx.restore();
   }
