@@ -109,6 +109,35 @@ let items = [];
 let debuffs = [];
 
 
+function updateHUD() {
+  stageInfoEl.textContent = `STAGE ${state.stage}`;
+  scoreInfoEl.textContent = `점수 ${Math.floor(state.score)}`;
+  heartCountEl.textContent = String(state.hearts);
+
+  const coreParts = [];
+  if (state.itemLevels.triangle > 0) coreParts.push(`△ Lv${state.itemLevels.triangle}`);
+  if (state.itemLevels.long > 0) coreParts.push(`━ Lv${state.itemLevels.long}`);
+  if (state.itemLevels.vlaser > 0) coreParts.push(`│⚡ Lv${state.itemLevels.vlaser}`);
+  if (state.itemLevels.hlaser > 0) coreParts.push(`─⚡ Lv${state.itemLevels.hlaser}`);
+  itemLevelInfoEl.textContent = coreParts.length ? coreParts.join('  ') : '코어 없음';
+
+  const fusionParts = [];
+  if (state.upgrades.crit > 0) fusionParts.push(`치명 ${state.upgrades.crit * 5}%`);
+  if (state.upgrades.attack > 0) fusionParts.push(`공격 +${(state.upgrades.attack * 0.25).toFixed(2)}`);
+  if (state.upgrades.maxBallBonus > 0) fusionParts.push(`최대공 +${state.upgrades.maxBallBonus}`);
+  if (state.upgrades.bomb > 0) fusionParts.push(`폭탄 Lv${state.upgrades.bomb}`);
+  if (state.upgrades.giantBall > 0) fusionParts.push(`거대공 Lv${state.upgrades.giantBall}`);
+  if (state.upgrades.speed > 0) fusionParts.push(`속도 +${(state.upgrades.speed * 0.5).toFixed(1)}`);
+  if (state.upgrades.leftDrone > 0) fusionParts.push(`좌드론 Lv${state.upgrades.leftDrone}`);
+  if (state.upgrades.rightDrone > 0) fusionParts.push(`우드론 Lv${state.upgrades.rightDrone}`);
+  if (state.upgrades.shield > 0) fusionParts.push(`실드 ${state.upgrades.shield}`);
+  fusionInfoEl.textContent = fusionParts.length ? fusionParts.join(' · ') : '융합 없음';
+
+  if (state.hearts >= 5) shopBtn.classList.remove('disabled');
+  else shopBtn.classList.add('disabled');
+}
+
+
 function loadSave() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
