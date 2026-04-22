@@ -8,44 +8,36 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="유미 벽돌깨기" />
   <title>유미 벽돌깨기</title>
-  <link rel="manifest" href="manifest.json?v=6" />
+  <link rel="manifest" href="manifest.json?v=7" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=7" />
 </head>
 <body>
   <div class="app">
-    <div class="top-row">
-      <h1>유미 벽돌깨기</h1>
+    <div class="topbar">
+      <div class="stat-group left">
+        <div id="stageInfo">STAGE 1</div>
+        <div id="scoreInfo">점수 0</div>
+      </div>
+      <div class="stat-group center">
+        <div id="itemLevelInfo">코어 없음</div>
+        <div id="fusionInfo">융합 없음</div>
+      </div>
       <button id="pauseBtn" class="pause-btn" aria-label="일시정지">❚❚</button>
     </div>
 
-    <div class="hud">
-      <div id="score">점수: 0</div>
-      <div id="level">레벨: 1</div>
-    </div>
+    <canvas id="game" width="420" height="780"></canvas>
 
-    <div class="hud secondary">
-      <div id="activeItem">장착: 없음</div>
-      <div id="itemTimer">남은 시간: -</div>
-    </div>
+    <button id="shopBtn" class="corner-btn shop-btn" aria-label="상점">
+      <span class="heart">♥</span>
+      <span id="heartCount">0</span>
+    </button>
 
-    <div class="hud secondary">
-      <div id="loveCount">이번 고백: 0</div>
-      <div id="totalLoveCount">총 고백: 0</div>
-    </div>
+    <button id="statusBtn" class="corner-btn status-btn" aria-label="상태">상태</button>
 
-    <canvas id="game" width="420" height="760"></canvas>
-
-    <p class="help">탭해서 시작 · 공이 모두 사라지거나 블록이 내려오면 게임 종료 · 우측 위 버튼으로 일시정지</p>
+    <div id="overlay" class="overlay hidden"></div>
   </div>
 
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js?v=6').catch(() => {});
-      });
-    }
-  </script>
-  <script src="game.js?v=6"></script>
+  <script src="game.js?v=7"></script>
 </body>
 </html>
