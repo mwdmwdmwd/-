@@ -13,7 +13,7 @@ const overlayEl = document.getElementById('overlay');
 
 const W = canvas.width;
 const H = canvas.height;
-const STORAGE_KEY = 'yumi_brick_breaker_stage_shop_v13';
+const STORAGE_KEY = 'yumi_brick_breaker_stage_shop_v14';
 
 const THEMES = [
   { top: '#1e1b4b', bottom: '#0f172a', block: '#f472b6', number: '#fbcfe8', boss: '#fb7185', accent: '#f9a8d4', line: '#fdf2f8' },
@@ -40,7 +40,7 @@ const LOVE_DELAY = 3000;
 const LASER_INTERVAL = 7000;
 const MISSILE_INTERVAL = 380;
 const MAX_STAGE_ROW_INTERVAL = 8000;
-const CORE_DROP_CHANCE = 0.035;
+const CORE_DROP_CHANCE = 0.025;
 
 const save = loadSave();
 const state = {
@@ -83,14 +83,15 @@ const state = {
     hlaser: 0,
   },
   upgrades: {
-    crit: save.upgrades?.crit || 0,
-    attack: save.upgrades?.attack || 0,
-    maxBallBonus: save.upgrades?.maxBallBonus || 0,
-    bomb: save.upgrades?.bomb || 0,
-    magnet: save.upgrades?.magnet || 0,
-    speed: save.upgrades?.speed || 0,
-    leftDrone: save.upgrades?.leftDrone || 0,
-    rightDrone: save.upgrades?.rightDrone || 0,
+    crit: 0,
+    attack: 0,
+    maxBallBonus: 0,
+    bomb: 0,
+    giantBall: 0,
+    speed: 0,
+    leftDrone: 0,
+    rightDrone: 0,
+    shield: 0,
   },
 };
 
@@ -105,6 +106,8 @@ let bricks = [];
 let balls = [];
 let drones = [];
 let items = [];
+let debuffs = [];
+
 
 function loadSave() {
   try {
@@ -117,7 +120,6 @@ function loadSave() {
 function persistSave() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     totalLove: state.totalLove,
-    upgrades: state.upgrades,
   }));
 }
 
@@ -172,7 +174,7 @@ function spawnCoreDropFromBrick(brick) {
 function attackPower() { return 1 + state.upgrades.attack * 0.25; }
 function critChance() { return state.upgrades.crit * 0.05; }
 function ballSpeed() { return BASE_BALL_SPEED + state.upgrades.speed * 0.5; }
-function magnetCapacity() { return state.upgrades.magnet; }
+function shieldCount() { return state.upgrades.shield || 0; }
 function longMultiplier() {
   const lv = state.itemLevels.long;
   if (lv <= 0) return 1;
@@ -201,7 +203,36 @@ function dronePower(side) {
   return v * 0.5;
 }
 
+function bossNumber() { return Math.floor(state.stage / 10); }
+function bossDebuffCount() {
+  const n = bossNumber();
+  if (n >= 121) return 12;
+  if (n >= 111) return 10;
+  if (n >= 101) return 10;
+  if (n >= 31) return 3;
+  if (n >= 21) return 2;
+  if (n >= 11) return 1;
+  return 0;
+}
+function bossReinforcementCount() {
+  const n = bossNumber();
+  if (n >= 121) return 12;
+  if (n >= 111) return 10;
+  return 5;
+}
+function bossDebuffInterval() {
+  return bossNumber() >= 121 ? 1500 : 2000;
+}
+function strongestBlockHp() {
+  const plan = currentNumberBlockPlan();
+  return Math.max(1, plan.hp);
+}
+
 function rowIntervalMs() {
+  if (state.stage >= 250) return 500;
+  if (state.stage >= 200) return 700;
+  if (state.stage >= 100) return 1000;
+  if (state.stage >= 70) return 2000;
   const bucket = Math.floor((state.stage - 1) / 10);
   return Math.max(3000, 8000 - bucket * 1000);
 }
@@ -342,7 +373,7 @@ function maybeMarkNewRowHeart(newRowBricks) {
 
 function createBossStage() {
   if (bricks.some((b) => !b.destroyed && b.type === 'boss')) return;
-  const hp = state.stage + 10;
+  const hp = (state.stage + 10) * 2;
   state.bossMaxHp = hp;
   state.bossHp = hp;
   const spawnY = BRICK.top - 3 * ROW_STEP;
@@ -388,10 +419,21 @@ function fullReset() {
   state.heartScheduledRow = 1 + Math.floor(Math.random() * 5);
   state.hearts = 0;
   state.itemLevels = { triangle: 0, long: 0, vlaser: 0, hlaser: 0 };
-  state.upgrades = { ...save.upgrades, ...state.upgrades };
+  state.upgrades = {
+    crit: 0,
+    attack: 0,
+    maxBallBonus: 0,
+    bomb: 0,
+    giantBall: 0,
+    speed: 0,
+    leftDrone: 0,
+    rightDrone: 0,
+    shield: 0,
+  };
   bricks = [];
   balls = [];
   items = [];
+  debuffs = [];
   state.particles = [];
   state.floatingTexts = [];
   state.missiles = [];
@@ -402,13 +444,28 @@ function fullReset() {
   initStage();
 }
 
-function updateHUD() {
-  stageInfoEl.textContent = `STAGE ${state.stage}`;
-  scoreInfoEl.textContent = `점수 ${state.score} · ${state.destroyedThisStage}/20`;
-  itemLevelInfoEl.textContent = coreLevelText();
-  fusionInfoEl.textContent = mainFusionText();
-  heartCountEl.textContent = state.hearts;
-  shopBtn.classList.toggle('disabled', state.hearts < 5);
+function update(dt) {
+  if (state.status === 'love') {
+    if (nowMs() >= state.loveUntil) {
+      closeOverlay();
+      balls = balls.length ? balls : [makeBall(paddle.x + paddle.width / 2, paddle.y - 12)];
+      balls.forEach((b) => { b.paddleHits = 0; });
+      state.status = 'playing';
+    }
+    return;
+  }
+  if (state.status !== 'playing') return;
+
+  updateBossAnimation(dt);
+  updateRows(dt);
+  updateAbilities(dt);
+  updateBossDebuffs();
+  updateItems();
+  updateBalls(dt);
+  updateEffects(dt);
+  syncHeldBalls();
+  checkDanger();
+  updateHUD();
 }
 
 function openOverlay(html) {
@@ -487,9 +544,8 @@ function offerPreview(offer) {
       const cur = state.upgrades.bomb;
       return cur > 0 ? `현재 활성 → 폭발 반경 강화` : '5회 반사마다 1회 폭발';
     }
-    case 'magnet': {
-      const cur = magnetCapacity();
-      return `현재 ${cur}개 → ${cur + 1}개`;
+    case 'giantBall': {
+      return '현재 공 중 하나가 2배, 이미 모두 2배면 하나가 3배';
     }
     case 'speed': {
       const cur = ballSpeed();
@@ -502,6 +558,10 @@ function offerPreview(offer) {
     case 'rightDrone': {
       const cur = dronePower('right');
       return `현재 ${cur.toFixed(1)} → ${(cur + 0.5).toFixed(1)}`;
+    }
+    case 'shield': {
+      const cur = shieldCount();
+      return `현재 ${cur}개 → ${Math.min(10, cur + 1)}개`;
     }
     default:
       return '';
@@ -532,10 +592,11 @@ function shopPool() {
     { key: 'attack', cost: 5, title: '공격력 +0.25', desc: '공격력이 0.25 증가', apply: () => state.upgrades.attack += 1 },
     { key: 'addBall', cost: 5, title: '최대 공 +1 (25%)', desc: '25% 확률로 최대 공 개수가 1 증가', apply: () => tryIncreaseMaxBall() },
     { key: 'bomb', cost: 10, title: '폭탄', desc: '패들에 5번 맞을 때마다 1회 폭탄 충전, 다음 충돌 때 주변에 2 데미지', apply: () => state.upgrades.bomb += 1 },
-    { key: 'magnet', cost: 10, title: '자석', desc: '패들에 붙여둘 수 있는 공 +1', apply: () => state.upgrades.magnet += 1 },
+    { key: 'giantBall', cost: 10, title: '거대 공', desc: '현재 공 중 랜덤 1개를 2배로, 이미 모두 2배면 1개를 3배로', apply: () => upgradeRandomBallSize() },
     { key: 'speed', cost: 10, title: '속도 +0.5', desc: '공 기본 속도 +0.5', apply: () => state.upgrades.speed += 1 },
     { key: 'leftDrone', cost: 15, title: '뿅뿅이', desc: '왼쪽 하트 드론 공격력 +0.5', apply: () => state.upgrades.leftDrone += 1 },
     { key: 'rightDrone', cost: 15, title: '뾱뾱이', desc: '오른쪽 하트 드론 공격력 +0.5', apply: () => state.upgrades.rightDrone += 1 },
+    { key: 'shield', cost: 15, title: '실드 +1', desc: '보스 디버프 1개를 막는 패들 실드 추가', apply: () => state.upgrades.shield = Math.min(10, (state.upgrades.shield || 0) + 1) },
   ];
 }
 
@@ -601,8 +662,9 @@ function showStatusOverlay() {
       <div class="kv"><span>현재 공 수</span><strong>${balls.length}</strong></div>
       <div class="kv"><span>최대 공 수</span><strong>${maxBallCount()}</strong></div>
       <div class="kv"><span>공 속도</span><strong>${ballSpeed().toFixed(1)}</strong></div>
+      <div class="kv"><span>거대 공 업그레이드</span><strong>${state.upgrades.giantBall || 0}</strong></div>
       <div class="kv"><span>폭탄 공</span><strong>${state.upgrades.bomb > 0 ? '활성' : '없음'}</strong></div>
-      <div class="kv"><span>자석 용량</span><strong>${magnetCapacity()}</strong></div>
+      <div class="kv"><span>실드</span><strong>${shieldCount()}</strong></div>
       <div class="kv"><span>왼쪽 드론</span><strong>${dronePower('left').toFixed(1)}</strong></div>
       <div class="kv"><span>오른쪽 드론</span><strong>${dronePower('right').toFixed(1)}</strong></div>
       <div class="kv"><span>세모</span><strong>Lv.${state.itemLevels.triangle}</strong></div>
@@ -617,6 +679,103 @@ function showStatusOverlay() {
     closeOverlay();
     state.status = state.previousStatus === 'playing' ? 'playing' : 'paused';
   };
+}
+
+function upgradeRandomBallSize() {
+  if (!balls.length) {
+    addFloatingText('공 없음', paddle.x + paddle.width / 2, paddle.y - 24, '#fca5a5', 14);
+    return;
+  }
+  const normal = balls.filter((b) => b.r < BALL_RADIUS * 2);
+  const doubled = balls.filter((b) => b.r >= BALL_RADIUS * 2 && b.r < BALL_RADIUS * 3);
+  if (normal.length) {
+    const target = choice(normal);
+    target.r = BALL_RADIUS * 2;
+    addFloatingText('거대 공!', target.x, target.y, '#93c5fd', 15);
+  } else if (doubled.length) {
+    const target = choice(doubled);
+    target.r = BALL_RADIUS * 3;
+    addFloatingText('초거대 공!', target.x, target.y, '#60a5fa', 15);
+  } else {
+    addFloatingText('모든 공 최대', paddle.x + paddle.width / 2, paddle.y - 24, '#fde68a', 14);
+  }
+  state.upgrades.giantBall = (state.upgrades.giantBall || 0) + 1;
+}
+
+function spawnBossReinforcements() {
+  const count = bossReinforcementCount();
+  const hp = strongestBlockHp();
+  const used = new Set();
+  for (let i = 0; i < count; i += 1) {
+    let col = 0;
+    let row = 0;
+    let tries = 0;
+    do {
+      col = Math.floor(rand(0, BRICK.cols));
+      row = Math.floor(rand(0, Math.max(START_ROWS + 2, 8)));
+      tries += 1;
+    } while (used.has(`${col}:${row}`) && tries < 30);
+    used.add(`${col}:${row}`);
+    const existing = bricks.find((b) => !b.destroyed && b.type !== 'boss' && b.col === col && b.row === row);
+    if (existing) {
+      existing.type = 'elite';
+      existing.hp = Math.max(existing.hp, hp);
+      existing.maxHp = existing.hp;
+    } else {
+      const brick = createBrick(col, row, 'elite', hp);
+      bricks.push(brick);
+    }
+  }
+  addFloatingText('보스 증원!', W / 2, BRICK.top + 24, '#fca5a5', 20);
+}
+
+function spawnBossDebuffs() {
+  const count = bossDebuffCount();
+  if (!count) return;
+  for (let i = 0; i < count; i += 1) {
+    debuffs.push({ x: rand(24, W - 24), y: BRICK.top - 16, vy: rand(2.1, 2.8), size: 14 });
+  }
+}
+
+function randomActiveCoreKey() {
+  const keys = Object.keys(state.itemLevels).filter((k) => state.itemLevels[k] > 0);
+  return keys.length ? choice(keys) : null;
+}
+
+function applyBossDebuff() {
+  if (shieldCount() > 0) {
+    state.upgrades.shield -= 1;
+    addFloatingText('실드 방어!', paddle.x + paddle.width / 2, paddle.y - 18, '#93c5fd', 15);
+    return;
+  }
+  const hits = bossNumber() >= 121 ? 2 : 1;
+  let changed = false;
+  for (let i = 0; i < hits; i += 1) {
+    const key = randomActiveCoreKey();
+    if (!key) break;
+    state.itemLevels[key] = Math.max(0, state.itemLevels[key] - 1);
+    changed = true;
+  }
+  if (changed) {
+    resetPaddle();
+    updateHUD();
+    addFloatingText('코어 다운!', paddle.x + paddle.width / 2, paddle.y - 18, '#fca5a5', 15);
+  } else {
+    addFloatingText('디버프 무효', paddle.x + paddle.width / 2, paddle.y - 18, '#fde68a', 14);
+  }
+}
+
+function updateBossDebuffs() {
+  for (const d of debuffs) d.y += d.vy;
+  debuffs = debuffs.filter((d) => {
+    const caught = d.y + d.size >= paddle.y && d.y - d.size <= paddle.y + paddle.height && d.x >= paddle.x && d.x <= paddle.x + paddle.width;
+    if (caught) {
+      applyBossDebuff();
+      addParticles(d.x, d.y, '#f43f5e', 10, 2.5);
+      return false;
+    }
+    return d.y - d.size <= H + 20;
+  });
 }
 
 function showCoreChoice() {}
@@ -702,8 +861,9 @@ function damageBrick(brick, amount, isBeam = false) {
     state.bossHp = Math.max(0, brick.hp);
     if (!brick.phaseTriggered && brick.hp <= brick.maxHp / 2) {
       brick.phaseTriggered = true;
-      addNewRow();
-      addFloatingText('보스 분노!', W / 2, BRICK.top + 24, '#fca5a5', 20);
+      spawnBossReinforcements();
+      brick.lastDebuffAt = nowMs();
+      if (bossDebuffCount() > 0) spawnBossDebuffs();
     }
   }
   if (brick.hp <= 0) {
@@ -913,7 +1073,6 @@ function updateBossAnimation(dt) {
 
 function updateBalls(dt) {
   const next = [];
-  const heldCount = balls.filter((b) => b.held).length;
   for (const ball of balls) {
     if (ball.held) {
       next.push(ball);
@@ -947,12 +1106,6 @@ function updateBalls(dt) {
 
     const paddleRect = { x: paddle.x, y: paddle.y, width: paddle.width, height: paddle.height };
     if (circleRectCollision(ball, paddleRect) && ball.vy > 0) {
-      if (magnetCapacity() > 0 && balls.filter((b) => b.held).length < magnetCapacity()) {
-        ball.held = true;
-        next.push(ball);
-        syncHeldBalls();
-        continue;
-      }
       const hit = (ball.x - (paddle.x + paddle.width / 2)) / (paddle.width / 2);
       const angle = hit * (Math.PI / 3);
       const speed = ballSpeed();
@@ -960,7 +1113,7 @@ function updateBalls(dt) {
       ball.vy = -Math.abs(Math.cos(angle) * speed);
       ball.y = paddle.y - ball.r - 1;
       ball.paddleHits += 1;
-      if (state.upgrades.bomb > 0 && ball.paddleHits >= 5) ball.bombReady = true;
+      if (state.upgrades.bomb > 0 && ball.paddleHits > 0 && ball.paddleHits % 5 === 0) ball.bombReady = true;
       next.push(ball);
       continue;
     }
@@ -1028,6 +1181,14 @@ function updateAbilities(dt) {
   if (state.itemLevels.hlaser > 0 && now - state.lastHorizontalAt >= LASER_INTERVAL) {
     state.lastHorizontalAt = now;
     fireHorizontalLightning();
+  }
+  const boss = bricks.find((b) => !b.destroyed && b.type === 'boss');
+  if (boss && boss.phaseTriggered && bossDebuffCount() > 0) {
+    boss.lastDebuffAt = boss.lastDebuffAt || now;
+    if (now - boss.lastDebuffAt >= bossDebuffInterval()) {
+      boss.lastDebuffAt = now;
+      spawnBossDebuffs();
+    }
   }
   updateDrones(dt);
 }
@@ -1113,12 +1274,6 @@ function drawBricks() {
     if (brick.destroyed) continue;
     if (brick.type === 'boss') {
       roundRect(brick.x, brick.y, brick.width, brick.height, 14, t.boss, 'rgba(255,255,255,0.25)');
-      const ratio = brick.hp / brick.maxHp;
-      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-      ctx.lineWidth = 2;
-      if (ratio < 0.75) { ctx.beginPath(); ctx.moveTo(brick.x + 80, brick.y + 20); ctx.lineTo(brick.x + 130, brick.y + 54); ctx.lineTo(brick.x + 102, brick.y + 82); ctx.stroke(); }
-      if (ratio < 0.5) { ctx.beginPath(); ctx.moveTo(brick.x + brick.width - 90, brick.y + 14); ctx.lineTo(brick.x + brick.width - 138, brick.y + 48); ctx.lineTo(brick.x + brick.width - 98, brick.y + 86); ctx.stroke(); }
-      if (ratio < 0.25) { ctx.beginPath(); ctx.moveTo(brick.x + brick.width / 2, brick.y + 10); ctx.lineTo(brick.x + brick.width / 2 - 30, brick.y + 40); ctx.lineTo(brick.x + brick.width / 2 + 20, brick.y + 90); ctx.stroke(); }
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 18px sans-serif';
       ctx.textAlign = 'center';
@@ -1128,6 +1283,7 @@ function drawBricks() {
     let fill = t.block;
     let stroke = 'rgba(255,255,255,0.12)';
     if (brick.type === 'number') fill = t.number;
+    if (brick.type === 'elite') fill = '#f59e0b';
     if (brick.type === 'heart') {
       const pulse = 0.86 + Math.sin(nowMs() / 180) * 0.14;
       ctx.save();
@@ -1140,13 +1296,15 @@ function drawBricks() {
       ctx.lineWidth = 4;
       roundRect(brick.x - 1, brick.y - 1, brick.width + 2, brick.height + 2, 7, null, 'rgba(253,164,175,0.45)');
       ctx.restore();
-    } else roundRect(brick.x, brick.y, brick.width, brick.height, 6, fill, stroke);
+    } else {
+      roundRect(brick.x, brick.y, brick.width, brick.height, 6, fill, stroke);
+    }
     ctx.textAlign = 'center';
     if (brick.type === 'heart') {
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 14px sans-serif';
       ctx.fillText('♥', brick.x + brick.width / 2, brick.y + brick.height / 2 + 5);
-    } else if (brick.type === 'number') {
+    } else if (brick.type === 'number' || brick.type === 'elite') {
       ctx.fillStyle = '#111827';
       ctx.font = 'bold 13px sans-serif';
       ctx.fillText(String(Math.ceil(brick.hp)), brick.x + brick.width / 2, brick.y + brick.height / 2 + 5);
@@ -1214,6 +1372,16 @@ function drawItems() {
 
 function drawPaddle() {
   roundRect(paddle.x, paddle.y, paddle.width, paddle.height, 7, '#ffffff', null);
+  if (shieldCount() > 0) {
+    ctx.save();
+    ctx.globalAlpha = 0.28;
+    roundRect(paddle.x - 3, paddle.y - 5, paddle.width + 6, paddle.height + 10, 10, '#60a5fa', '#bfdbfe');
+    ctx.restore();
+    ctx.fillStyle = '#dbeafe';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`x${shieldCount()}`, paddle.x + paddle.width / 2, paddle.y - 8);
+  }
   if (state.itemLevels.triangle > 0) {
     ctx.fillStyle = theme().accent;
     ctx.beginPath();
@@ -1319,6 +1487,28 @@ function drawBossBar() {
   roundRect(x, y, w * ratio, 12, 6, theme().boss, null);
 }
 
+function drawDebuffs() {
+  debuffs.forEach((d) => {
+    ctx.save();
+    ctx.translate(d.x, d.y);
+    ctx.fillStyle = '#f43f5e';
+    ctx.strokeStyle = '#fecdd3';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, -d.size);
+    ctx.lineTo(-d.size * 0.9, d.size);
+    ctx.lineTo(d.size * 0.9, d.size);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('!', 0, 4);
+    ctx.restore();
+  });
+}
+
 function drawOverlayHints() {
   if (state.status === 'start') return;
   if (state.status === 'playing' && balls.every((b) => b.held)) {
@@ -1336,6 +1526,7 @@ function draw() {
   drawBeams();
   drawBricks();
   drawItems();
+  drawDebuffs();
   drawMissiles();
   drawPaddle();
   drawDrones();
