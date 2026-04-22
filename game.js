@@ -1263,11 +1263,22 @@ statusBtn.onclick = () => {
 };
 
 overlayEl.addEventListener('click', (e) => {
+  if (state.status === 'gameover1' || state.status === 'gameover2') {
+    advanceGameOverTap();
+    return;
+  }
   if (e.target === overlayEl && state.status === 'paused') {
     closeOverlay();
     state.status = 'playing';
   }
 });
+
+overlayEl.addEventListener('touchstart', (e) => {
+  if (state.status === 'gameover1' || state.status === 'gameover2') {
+    e.preventDefault();
+    advanceGameOverTap();
+  }
+}, { passive: false });
 
 function loop(ts) {
   if (!state.lastTime) state.lastTime = ts;
