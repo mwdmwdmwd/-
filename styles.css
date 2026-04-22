@@ -160,3 +160,5 @@ body { min-height: 100vh; }
   .cards.cols-3 { grid-template-columns: 1fr; }
   .cards.cols-2 { grid-template-columns: 1fr; }
 }
+
+.card .preview { color: #fde68a; font-weight: 700; }

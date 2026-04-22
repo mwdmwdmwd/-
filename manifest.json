@@ -1,7 +1,7 @@
 {
   "name": "유미 벽돌깨기",
   "short_name": "유미벽돌",
-  "start_url": "./index.html?v=9",
+  "start_url": "./index.html?v=11",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
