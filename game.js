@@ -74,6 +74,7 @@ const state = {
   gameOverTapCount: 0,
   selectedCoreUntil: 0,
   shopOffers: [],
+  coreDropAvailable: true,
   itemLevels: {
     triangle: 0,
     long: 0,
@@ -102,6 +103,7 @@ const paddle = {
 let bricks = [];
 let balls = [];
 let drones = [];
+let items = [];
 
 function loadSave() {
   try {
@@ -150,6 +152,20 @@ function coreLevelText() {
   if (state.itemLevels.vlaser) entries.push(`세로 Lv.${state.itemLevels.vlaser}`);
   if (state.itemLevels.hlaser) entries.push(`가로 Lv.${state.itemLevels.hlaser}`);
   return entries.length ? entries.join(' · ') : '코어 없음';
+}
+
+function randomCoreType() {
+  return choice(['triangle', 'long', 'vlaser', 'hlaser']);
+}
+
+function spawnCoreDropFromBrick(brick) {
+  items.push({
+    x: brick.x + brick.width / 2,
+    y: brick.y + brick.height / 2,
+    vy: 1.6,
+    type: randomCoreType(),
+    size: 18,
+  });
 }
 
 function attackPower() { return 1 + state.upgrades.attack * 0.25; }
@@ -279,8 +295,6 @@ function allBlocksCleared() {
 function createStageRows() {
   bricks = [];
   resetPaddle();
-  const heartRowCandidate = coreSpawnScheduled(state.stage) ? Math.floor(rand(0, 5)) : -1;
-  const heartColCandidate = coreSpawnScheduled(state.stage) ? Math.floor(rand(0, BRICK.cols)) : -1;
   const numberPlan = currentNumberBlockPlan();
   const protectedCols = new Set();
   if (numberPlan.count > 0) {
@@ -290,19 +304,33 @@ function createStageRows() {
     for (let c = 0; c < BRICK.cols; c += 1) {
       let type = 'normal';
       let hp = 1;
-      if (r === heartRowCandidate && c === heartColCandidate) {
-        type = 'heart';
-      } else if (protectedCols.has(c) && r >= START_ROWS - 2) {
+      if (protectedCols.has(c) && r >= START_ROWS - 2) {
         type = 'number';
         hp = numberPlan.hp;
       }
       bricks.push(createBrick(c, r, type, hp));
     }
   }
+  spawnStageHeartBlock();
+}
+
+function spawnStageHeartBlock() {
+  const liveHeart = bricks.some((b) => !b.destroyed && b.type === 'heart');
+  if (liveHeart) return;
+  const row = Math.floor(rand(0, 5));
+  const col = Math.floor(rand(0, BRICK.cols));
+  const existing = findBrickAtGrid(col, row);
+  if (existing && existing.type !== 'boss') {
+    existing.type = 'heart';
+    existing.hp = 1;
+    existing.maxHp = 1;
+    return;
+  }
+  bricks.push(createBrick(col, row, 'heart', 1));
 }
 
 function createBossStage() {
-  bricks = [];
+  if (bricks.some((b) => !b.destroyed && b.type === 'boss')) return;
   const hp = state.stage + 10;
   state.bossMaxHp = hp;
   state.bossHp = hp;
@@ -323,8 +351,7 @@ function initStage() {
   state.rowTimer = 0;
   state.bossStage = state.stage % 10 === 0;
   state.destroyedThisStage = 0;
-  if (state.bossStage) createBossStage();
-  else createStageRows();
+  state.coreDropAvailable = coreSpawnScheduled(state.stage);
   if (!balls.length) {
     balls = [makeBall(paddle.x + paddle.width / 2, paddle.y - 12)];
     balls[0].held = true;
@@ -350,12 +377,14 @@ function fullReset() {
   state.upgrades = { ...save.upgrades, ...state.upgrades };
   bricks = [];
   balls = [];
+  items = [];
   state.particles = [];
   state.floatingTexts = [];
   state.missiles = [];
   state.beams = [];
   paddle.x = W / 2 - BASE_PADDLE.width / 2;
   resetPaddle();
+  createStageRows();
   initStage();
 }
 
@@ -385,7 +414,7 @@ function showStartOverlay() {
       <p>20개를 부수면 다음 스테이지로 넘어가고, 10스테이지마다 보스 행이 내려온다.</p>
       <div class="cards cols-2">
         <div class="card"><h3>하트 상점</h3><div class="desc">왼쪽 아래 ♥ 버튼으로 5/10/15 하트 카드 중 하나를 고를 수 있어.</div></div>
-        <div class="card"><h3>코어 아이템</h3><div class="desc">특정 스테이지의 하트 블록을 깨면 세모, 긴 패들, 세로/가로 번개 중 하나를 선택할 수 있어.</div></div>
+        <div class="card"><h3>코어 아이템</h3><div class="desc">특정 스테이지엔 코어 드롭이 한 번 떨어져. 패들로 먹어야 레벨이 오른다.</div></div>
       </div>
       <div class="actions"><button id="startRunBtn" class="primary-btn" style="flex:1">시작</button></div>
     </div>
@@ -535,46 +564,7 @@ function showStatusOverlay() {
   };
 }
 
-function showCoreChoice() {
-  state.previousStatus = state.status;
-  state.status = 'choose';
-  const pool = [
-    { key: 'triangle', title: '세모', desc: 'Lv1: 2분할 · Lv2: 3분할 · Lv3: 4분할' },
-    { key: 'long', title: '긴 패들', desc: 'Lv1: 2배 · Lv2: 3배 · Lv3: 4배 길이' },
-    { key: 'vlaser', title: '세로 번개', desc: '7초마다 랜덤 열 공격 · Lv1 2줄 / Lv2 4줄 / Lv3 6줄' },
-    { key: 'hlaser', title: '가로 번개', desc: '7초마다 랜덤 행 공격 · Lv1 2줄 / Lv2 4줄 / Lv3 6줄' },
-  ];
-  const offers = pool.sort(() => Math.random() - 0.5).slice(0, 3);
-  openOverlay(`
-    <div class="modal">
-      <h2>하트 블록 보상</h2>
-      <p>코어 아이템 하나를 고를 수 있어.</p>
-      <div class="cards cols-3" id="coreCards"></div>
-    </div>
-  `);
-  const wrap = document.getElementById('coreCards');
-  offers.forEach((offer) => {
-    const currentLv = state.itemLevels[offer.key];
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.innerHTML = `
-      <div>
-        <div class="cost">현재 Lv.${currentLv}</div>
-        <h3>${offer.title}</h3>
-        <div class="desc">${offer.desc}</div>
-      </div>
-      <button>선택</button>
-    `;
-    card.querySelector('button').onclick = () => {
-      state.itemLevels[offer.key] = Math.min(3, state.itemLevels[offer.key] + 1);
-      resetPaddle();
-      closeOverlay();
-      state.status = 'playing';
-      updateHUD();
-    };
-    wrap.appendChild(card);
-  });
-}
+function showCoreChoice() {}
 
 function movePaddle(clientX) {
   const rect = canvas.getBoundingClientRect();
@@ -600,7 +590,12 @@ function circleRectCollision(ball, rect) {
 
 function stageAdvance() {
   state.stage += 1;
-  initStage();
+  state.bossStage = state.stage % 10 === 0;
+  state.destroyedThisStage = 0;
+  state.rowTimer = 0;
+  state.coreDropAvailable = coreSpawnScheduled(state.stage);
+  spawnStageHeartBlock();
+  if (state.bossStage) createBossStage();
   updateHUD();
   addFloatingText(`STAGE ${state.stage}`, W / 2, H / 2, theme().accent, 22);
 }
@@ -626,18 +621,23 @@ function destroyBrick(brick, silent = false) {
     state.hearts += 1;
     persistSave();
     updateHUD();
-    showCoreChoice();
+  }
+  if (!silent && state.coreDropAvailable && brick.type !== 'heart' && brick.type !== 'boss') {
+    state.coreDropAvailable = false;
+    spawnCoreDropFromBrick(brick);
   }
   if (brick.type === 'boss') {
+    state.hearts += 3;
     state.runLove += 1;
     state.totalLove += 1;
     persistSave();
+    updateHUD();
     state.loveUntil = nowMs() + LOVE_DELAY;
     state.status = 'love';
     openOverlay(`
       <div class="modal center-note">
         <div class="big-love">유미야 사랑해!</div>
-        <p>3초 뒤 다음 스테이지로 이어집니다.</p>
+        <p>하트 +3 · 3초 뒤 다음 스테이지로 이어집니다.</p>
       </div>
     `);
   }
@@ -887,6 +887,26 @@ function triggerGameOver() {
   showGameOverOverlay();
 }
 
+function collectCoreItem(item) {
+  state.itemLevels[item.type] = Math.min(3, state.itemLevels[item.type] + 1);
+  resetPaddle();
+  updateHUD();
+  const names = { triangle: '세모', long: '긴 패들', vlaser: '세로 번개', hlaser: '가로 번개' };
+  addFloatingText(`${names[item.type]} Lv.${state.itemLevels[item.type]}`, item.x, item.y, theme().accent, 14);
+}
+
+function updateItems() {
+  for (const item of items) item.y += item.vy;
+  items = items.filter((item) => {
+    const caught = item.y + item.size >= paddle.y && item.y - item.size <= paddle.y + paddle.height && item.x >= paddle.x && item.x <= paddle.x + paddle.width;
+    if (caught) {
+      collectCoreItem(item);
+      return false;
+    }
+    return item.y - item.size <= H + 30;
+  });
+}
+
 function updateRows(dt) {
   state.rowTimer += dt;
   if (state.rowTimer >= rowIntervalMs()) {
@@ -932,10 +952,9 @@ function update(dt) {
   if (state.status === 'love') {
     if (nowMs() >= state.loveUntil) {
       closeOverlay();
-      state.stage += 1;
+      stageAdvance();
       balls = balls.length ? balls : [makeBall(paddle.x + paddle.width / 2, paddle.y - 12)];
-      balls.forEach((b) => { b.held = true; b.paddleHits = 0; });
-      initStage();
+      balls.forEach((b) => { b.paddleHits = 0; });
       state.status = 'playing';
     }
     return;
@@ -945,6 +964,7 @@ function update(dt) {
   updateBossAnimation(dt);
   updateRows(dt);
   updateAbilities(dt);
+  updateItems();
   updateBalls(dt);
   updateEffects(dt);
   syncHeldBalls();
@@ -1011,6 +1031,48 @@ function drawBricks() {
       ctx.font = 'bold 13px sans-serif';
       ctx.fillText(String(Math.ceil(brick.hp)), brick.x + brick.width / 2, brick.y + brick.height / 2 + 5);
     }
+  }
+}
+
+function drawItems() {
+  for (const item of items) {
+    ctx.save();
+    ctx.translate(item.x, item.y);
+    ctx.strokeStyle = theme().accent;
+    ctx.fillStyle = theme().accent;
+    ctx.lineWidth = 3;
+    if (item.type === 'triangle') {
+      ctx.beginPath();
+      ctx.moveTo(0, -14);
+      ctx.lineTo(-13, 10);
+      ctx.lineTo(13, 10);
+      ctx.closePath();
+      ctx.fill();
+    } else if (item.type === 'long') {
+      roundRect(-22, -6, 44, 12, 6, theme().accent, null);
+    } else if (item.type === 'vlaser') {
+      ctx.beginPath();
+      ctx.moveTo(0, -16);
+      ctx.lineTo(-6, -2);
+      ctx.lineTo(1, -2);
+      ctx.lineTo(-5, 16);
+      ctx.lineTo(7, 1);
+      ctx.lineTo(0, 1);
+      ctx.closePath();
+      ctx.fill();
+    } else if (item.type === 'hlaser') {
+      ctx.rotate(Math.PI / 2);
+      ctx.beginPath();
+      ctx.moveTo(0, -16);
+      ctx.lineTo(-6, -2);
+      ctx.lineTo(1, -2);
+      ctx.lineTo(-5, 16);
+      ctx.lineTo(7, 1);
+      ctx.lineTo(0, 1);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
   }
 }
 
