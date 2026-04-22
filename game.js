@@ -13,7 +13,7 @@ const overlayEl = document.getElementById('overlay');
 
 const W = canvas.width;
 const H = canvas.height;
-const STORAGE_KEY = 'yumi_brick_breaker_stage_shop_v11';
+const STORAGE_KEY = 'yumi_brick_breaker_stage_shop_v13';
 
 const THEMES = [
   { top: '#1e1b4b', bottom: '#0f172a', block: '#f472b6', number: '#fbcfe8', boss: '#fb7185', accent: '#f9a8d4', line: '#fdf2f8' },
@@ -40,7 +40,7 @@ const LOVE_DELAY = 3000;
 const LASER_INTERVAL = 7000;
 const MISSILE_INTERVAL = 380;
 const MAX_STAGE_ROW_INTERVAL = 8000;
-const CORE_DROP_CHANCE = 0.14;
+const CORE_DROP_CHANCE = 0.035;
 
 const save = loadSave();
 const state = {
@@ -85,7 +85,7 @@ const state = {
   upgrades: {
     crit: save.upgrades?.crit || 0,
     attack: save.upgrades?.attack || 0,
-    split: save.upgrades?.split || 0,
+    maxBallBonus: save.upgrades?.maxBallBonus || 0,
     bomb: save.upgrades?.bomb || 0,
     magnet: save.upgrades?.magnet || 0,
     speed: save.upgrades?.speed || 0,
@@ -171,28 +171,30 @@ function spawnCoreDropFromBrick(brick) {
 
 function attackPower() { return 1 + state.upgrades.attack * 0.25; }
 function critChance() { return state.upgrades.crit * 0.05; }
-function splitChance() { return state.upgrades.split * 0.03; }
 function ballSpeed() { return BASE_BALL_SPEED + state.upgrades.speed * 0.5; }
 function magnetCapacity() { return state.upgrades.magnet; }
 function longMultiplier() {
   const lv = state.itemLevels.long;
   if (lv <= 0) return 1;
-  return 1 + lv;
+  return 1 + (3 * lv) / 10; // Lv10 => x4.0 (old Lv3 scale)
 }
 function maxBallCount() {
-  const lv = state.itemLevels.triangle;
-  if (lv <= 0) return 1;
-  return [0,3,5,7][lv];
+  const base = Math.max(1, state.itemLevels.triangle + 1);
+  return base + (state.upgrades.maxBallBonus || 0);
 }
 
 function splitCountForLevel() {
   const lv = state.itemLevels.triangle;
   if (lv <= 0) return 0;
-  return lv + 1; // 2,3,4
+  return lv + 1;
 }
 function lightningCount(lv) {
   if (lv <= 0) return 0;
-  return lv * 2;
+  if (lv >= 10) return 5;
+  if (lv >= 7) return 4;
+  if (lv >= 5) return 3;
+  if (lv >= 3) return 2;
+  return 1;
 }
 function dronePower(side) {
   const v = side === 'left' ? state.upgrades.leftDrone : state.upgrades.rightDrone;
@@ -477,9 +479,9 @@ function offerPreview(offer) {
       const cur = attackPower();
       return `현재 ${cur.toFixed(2)} → ${(cur + 0.25).toFixed(2)}`;
     }
-    case 'split': {
-      const cur = Math.round(splitChance() * 100);
-      return `현재 ${cur}% → ${cur + 3}%`;
+    case 'addBall': {
+      const cur = maxBallCount();
+      return `현재 최대 ${cur}개 → ${cur + 1}개 (성공 시)`;
     }
     case 'bomb': {
       const cur = state.upgrades.bomb;
@@ -528,7 +530,7 @@ function shopPool() {
   return [
     { key: 'crit', cost: 5, title: '치명타 +5%', desc: '공의 치명타 확률이 5% 증가', apply: () => state.upgrades.crit += 1 },
     { key: 'attack', cost: 5, title: '공격력 +0.25', desc: '공격력이 0.25 증가', apply: () => state.upgrades.attack += 1 },
-    { key: 'split', cost: 5, title: '분열 +3%', desc: '공이 블록에 맞을 때 3% 확률로 자가 분열', apply: () => state.upgrades.split += 1 },
+    { key: 'addBall', cost: 5, title: '최대 공 +1 (25%)', desc: '25% 확률로 최대 공 개수가 1 증가', apply: () => tryIncreaseMaxBall() },
     { key: 'bomb', cost: 10, title: '폭탄', desc: '패들에 5번 맞을 때마다 1회 폭탄 충전, 다음 충돌 때 주변에 2 데미지', apply: () => state.upgrades.bomb += 1 },
     { key: 'magnet', cost: 10, title: '자석', desc: '패들에 붙여둘 수 있는 공 +1', apply: () => state.upgrades.magnet += 1 },
     { key: 'speed', cost: 10, title: '속도 +0.5', desc: '공 기본 속도 +0.5', apply: () => state.upgrades.speed += 1 },
@@ -596,7 +598,8 @@ function showStatusOverlay() {
       <h2>현재 능력치</h2>
       <div class="kv"><span>공격력</span><strong>${attackPower().toFixed(2)}</strong></div>
       <div class="kv"><span>치명타</span><strong>${Math.round(critChance() * 100)}%</strong></div>
-      <div class="kv"><span>자가 분열</span><strong>${Math.round(splitChance() * 100)}%</strong></div>
+      <div class="kv"><span>현재 공 수</span><strong>${balls.length}</strong></div>
+      <div class="kv"><span>최대 공 수</span><strong>${maxBallCount()}</strong></div>
       <div class="kv"><span>공 속도</span><strong>${ballSpeed().toFixed(1)}</strong></div>
       <div class="kv"><span>폭탄 공</span><strong>${state.upgrades.bomb > 0 ? '활성' : '없음'}</strong></div>
       <div class="kv"><span>자석 용량</span><strong>${magnetCapacity()}</strong></div>
@@ -768,6 +771,17 @@ function spawnSelfSplit(ball) {
   addFloatingText('+분열', ball.x, ball.y, '#fde68a', 12);
 }
 
+
+function tryIncreaseMaxBall() {
+  if (Math.random() < 0.25) {
+    state.upgrades.maxBallBonus = (state.upgrades.maxBallBonus || 0) + 1;
+    addFloatingText('최대 공 증가!', paddle.x + paddle.width / 2, paddle.y - 24, '#93c5fd', 15);
+    updateHUD();
+  } else {
+    addFloatingText('꽝!', paddle.x + paddle.width / 2, paddle.y - 24, '#fca5a5', 15);
+  }
+}
+
 function addNewRow() {
   bricks.filter((b) => !b.destroyed).forEach((b) => {
     if (b.type === 'boss') {
@@ -883,7 +897,6 @@ function handleBallBrickCollision(ball) {
       ball.bombReady = false;
       ball.paddleHits = 0;
     }
-    if (Math.random() < splitChance()) spawnSelfSplit(ball);
     return true;
   }
   return false;
@@ -967,7 +980,7 @@ function triggerGameOver() {
 
 function collectCoreItem(item) {
   const prev = state.itemLevels[item.type];
-  state.itemLevels[item.type] = Math.min(3, state.itemLevels[item.type] + 1);
+  state.itemLevels[item.type] = Math.min(10, state.itemLevels[item.type] + 1);
   resetPaddle();
   updateHUD();
   const names = { triangle: '세모', long: '긴 패들', vlaser: '세로 번개', hlaser: '가로 번개' };
